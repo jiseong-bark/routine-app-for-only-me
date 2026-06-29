@@ -20,9 +20,9 @@ from sqlalchemy import (
     create_engine,
     func,
     select,
+    text,
     update,
 )
-from sqlalchemy.exc import IntegrityError
 
 
 # Run with `python app.py` as well as `streamlit run app.py`.
@@ -119,25 +119,7 @@ def delete_routine(routine_id):
 
 
 def create_log_if_not_exists(routine_id, log_date):
-    with engine.begin() as conn:
-        existing_id = conn.execute(
-            select(routine_logs.c.id).where(
-                routine_logs.c.routine_id == routine_id,
-                routine_logs.c.log_date == log_date,
-            )
-        ).scalar_one_or_none()
-
-        if existing_id is None:
-            try:
-                conn.execute(
-                    routine_logs.insert().values(
-                        routine_id=routine_id,
-                        log_date=log_date,
-                        checked=False,
-                    )
-                )
-            except IntegrityError:
-                pass
+    return None
 
 
 def get_routine_logs(log_date):
@@ -162,16 +144,21 @@ def get_routine_logs(log_date):
 
 
 def update_check_status(routine_id, log_date, checked):
-    create_log_if_not_exists(routine_id, log_date)
-
     with engine.begin() as conn:
         conn.execute(
-            update(routine_logs)
-            .where(
-                routine_logs.c.routine_id == routine_id,
-                routine_logs.c.log_date == log_date,
-            )
-            .values(checked=checked)
+            text(
+                """
+                INSERT INTO routine_logs (routine_id, log_date, checked)
+                VALUES (:routine_id, :log_date, :checked)
+                ON CONFLICT (routine_id, log_date) DO UPDATE
+                SET checked = EXCLUDED.checked
+                """
+            ),
+            {
+                "routine_id": routine_id,
+                "log_date": log_date,
+                "checked": checked,
+            },
         )
 
 
@@ -197,7 +184,7 @@ def get_monthly_routine_summary(year, month):
         ).mappings().all()
 
     checked_by_date = {
-        row["log_date"].isoformat(): int(row["checked_count"] or 0)
+        (row["log_date"].isoformat() if hasattr(row["log_date"], "isoformat") else str(row["log_date"])): int(row["checked_count"] or 0)
         for row in rows
     }
 
@@ -257,9 +244,6 @@ active_routines = get_active_routines()
 if len(active_routines) == 0:
     st.write("아직 등록된 루틴이 없습니다.")
 else:
-    for routine in active_routines:
-        create_log_if_not_exists(routine["id"], log_date)
-
     logs = get_routine_logs(log_date)
     checked_count = 0
     total_count = len(logs)
@@ -277,10 +261,8 @@ else:
 
         if checked:
             checked_count += 1
-
         if checked != checked_value:
             update_check_status(routine_id, log_date, checked)
-            st.rerun()
 
     rate = checked_count / total_count if total_count > 0 else 0
 
@@ -367,5 +349,8 @@ if len(active_routines) > 0:
         st.rerun()
 else:
     st.write("삭제할 루틴이 없습니다.")
+
+
+
 
 
