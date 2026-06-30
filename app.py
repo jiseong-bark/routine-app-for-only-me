@@ -276,25 +276,26 @@ def render_monthly_view(selected_date):
     weekdays = ["월", "화", "수", "목", "금", "토", "일"]
     monthly_dict = {data["day"]: data for data in monthly_data}
     month_calendar = calendar.monthcalendar(year, month)
-    calendar_cells = []
-
-    for weekday in weekdays:
-        calendar_cells.append(f"<div class='calendar-header'>{weekday}</div>")
+    table_rows = [
+        "<table class='routine-calendar-table'>",
+        "<thead><tr>" + "".join(f"<th>{weekday}</th>" for weekday in weekdays) + "</tr></thead>",
+        "<tbody>",
+    ]
 
     for week in month_calendar:
+        table_rows.append("<tr>")
         for day in week:
             if day == 0:
-                calendar_cells.append("<div class='calendar-cell empty'></div>")
+                table_rows.append("<td class='empty'></td>")
                 continue
 
             data = monthly_dict[day]
             day_rate = data["rate"]
-            cell_class = "calendar-cell"
+            cell_class = "future" if data["is_future"] else ""
 
             if data["is_future"]:
                 icon = "▫️"
                 rate_text = "-"
-                cell_class += " future"
             elif day_rate == 1:
                 icon = "✅"
                 rate_text = "100%"
@@ -308,20 +309,19 @@ def render_monthly_view(selected_date):
                 icon = "⬜"
                 rate_text = "0%"
 
-            calendar_cells.append(
+            table_rows.append(
                 f"""
-                <div class='{cell_class}'>
+                <td class='{cell_class}'>
                     <div class='calendar-icon'>{icon}</div>
                     <div class='calendar-day'>{day}일</div>
                     <div class='calendar-rate'>{rate_text}</div>
-                </div>
+                </td>
                 """
             )
+        table_rows.append("</tr>")
 
-    st.markdown(
-        "<div class='routine-calendar'>" + "".join(calendar_cells) + "</div>",
-        unsafe_allow_html=True,
-    )
+    table_rows.extend(["</tbody>", "</table>"])
+    st.markdown("".join(table_rows), unsafe_allow_html=True)
 
 
 def render_manage_view():
@@ -357,54 +357,49 @@ st.markdown(
         min-height: 2.75rem;
     }
 
-    .routine-calendar {
-        display: grid;
-        grid-template-columns: repeat(7, minmax(0, 1fr));
-        gap: 6px;
+    .routine-calendar-table {
         width: 100%;
+        table-layout: fixed;
+        border-collapse: separate;
+        border-spacing: 5px;
     }
 
-    .calendar-header,
-    .calendar-cell {
-        min-width: 0;
+    .routine-calendar-table th {
         text-align: center;
-    }
-
-    .calendar-header {
         font-size: 0.86rem;
         font-weight: 700;
         color: #4b5563;
         padding: 0.25rem 0;
     }
 
-    .calendar-cell {
+    .routine-calendar-table td {
+        width: 14.285%;
+        min-width: 0;
+        height: 62px;
         border: 1px solid #e5e7eb;
         border-radius: 8px;
-        padding: 0.45rem 0.2rem;
-        min-height: 62px;
         background: #ffffff;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
+        text-align: center;
+        vertical-align: middle;
+        padding: 0.25rem 0.1rem;
         line-height: 1.15;
         overflow: hidden;
     }
 
-    .calendar-cell.empty {
+    .routine-calendar-table td.empty {
         border-color: transparent;
         background: transparent;
     }
 
-    .calendar-cell.future {
+    .routine-calendar-table td.future {
         background: #f9fafb;
         color: #9ca3af;
     }
 
     .calendar-icon {
-        font-size: 1.15rem;
+        font-size: 1.1rem;
         line-height: 1;
-        margin-bottom: 0.22rem;
+        margin-bottom: 0.18rem;
     }
 
     .calendar-day {
@@ -434,18 +429,18 @@ st.markdown(
             font-size: 1.08rem !important;
         }
 
-        .routine-calendar {
-            gap: 4px;
+        .routine-calendar-table {
+            border-spacing: 3px;
         }
 
-        .calendar-header {
+        .routine-calendar-table th {
             font-size: 0.72rem;
         }
 
-        .calendar-cell {
+        .routine-calendar-table td {
+            height: 50px;
             border-radius: 6px;
-            min-height: 48px;
-            padding: 0.3rem 0.05rem;
+            padding: 0.18rem 0.02rem;
         }
 
         .calendar-icon {
@@ -495,3 +490,4 @@ elif view == "월간":
     render_monthly_view(selected_date)
 else:
     render_manage_view()
+
