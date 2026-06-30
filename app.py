@@ -118,10 +118,6 @@ def delete_routine(routine_id):
         )
 
 
-def create_log_if_not_exists(routine_id, log_date):
-    return None
-
-
 def get_routine_logs(log_date):
     with engine.begin() as conn:
         rows = conn.execute(
@@ -163,13 +159,17 @@ def update_check_status(routine_id, log_date, checked):
 
 
 def get_monthly_routine_summary(year, month):
-    active_routines = get_active_routines()
-    total_routine_count = len(active_routines)
     last_day = calendar.monthrange(year, month)[1]
     start_date = date(year, month, 1)
     end_date = date(year, month, last_day)
 
     with engine.begin() as conn:
+        total_routine_count = conn.execute(
+            select(func.count())
+            .select_from(routines)
+            .where(routines.c.active.is_(True))
+        ).scalar_one()
+
         rows = conn.execute(
             select(
                 routine_logs.c.log_date,
@@ -211,40 +211,23 @@ def get_monthly_routine_summary(year, month):
     return monthly_data
 
 
-st.set_page_config(page_title="루틴 체크", page_icon="✅", layout="centered")
-init_db()
+def render_today_view(log_date):
+    st.subheader("루틴 추가")
+    new_routine = st.text_input("추가할 루틴", placeholder="예: 5시 기상")
 
-st.title("나의 루틴 체크 ✅")
+    if st.button("루틴 추가", type="primary"):
+        add_routine(new_routine)
+        st.rerun()
 
-with st.sidebar:
-    st.subheader("저장 방식")
-    if DATABASE_URL.startswith("sqlite"):
-        st.info("현재는 이 노트북의 SQLite 파일에 저장됩니다. 여러 기기 연동은 DATABASE_URL 설정 후 가능합니다.")
-    else:
-        st.success("클라우드 DB에 저장 중입니다. 같은 앱 주소로 접속하면 기기 간 동기화됩니다.")
+    st.divider()
+    st.subheader("오늘의 루틴 체크")
 
-selected_date = st.date_input("날짜 선택", today_korea())
-log_date = selected_date
-
-st.caption(f"선택한 날짜: {log_date.isoformat()}")
-st.divider()
-
-st.subheader("루틴 추가")
-new_routine = st.text_input("추가할 루틴", placeholder="예: 5시 기상")
-
-if st.button("루틴 추가", type="primary"):
-    add_routine(new_routine)
-    st.rerun()
-
-st.divider()
-st.subheader("오늘의 루틴 체크")
-
-active_routines = get_active_routines()
-
-if len(active_routines) == 0:
-    st.write("아직 등록된 루틴이 없습니다.")
-else:
     logs = get_routine_logs(log_date)
+
+    if len(logs) == 0:
+        st.write("아직 등록된 루틴이 없습니다.")
+        return
+
     checked_count = 0
     total_count = len(logs)
 
@@ -261,6 +244,7 @@ else:
 
         if checked:
             checked_count += 1
+
         if checked != checked_value:
             update_check_status(routine_id, log_date, checked)
 
@@ -271,86 +255,243 @@ else:
     st.write(f"{checked_count}개 / {total_count}개 완료")
     st.write(f"달성률 {rate * 100:.0f}%")
 
-st.divider()
-st.subheader("월간 루틴 수행 현황")
 
-year = selected_date.year
-month = selected_date.month
-monthly_data = get_monthly_routine_summary(year, month)
-past_monthly_data = [data for data in monthly_data if not data["is_future"]]
-monthly_checked_total = sum(data["checked_count"] for data in past_monthly_data)
-monthly_possible_total = sum(data["total_count"] for data in past_monthly_data)
-monthly_rate = monthly_checked_total / monthly_possible_total if monthly_possible_total > 0 else 0
+def render_monthly_view(selected_date):
+    st.subheader("월간 루틴 수행 현황")
 
-st.write(f"{year}년 {month}월 전체 달성률")
-st.progress(monthly_rate)
-st.write(f"{monthly_checked_total}개 / {monthly_possible_total}개 완료")
-st.write(f"월간 달성률 {monthly_rate * 100:.0f}%")
-st.write("")
+    year = selected_date.year
+    month = selected_date.month
+    monthly_data = get_monthly_routine_summary(year, month)
+    past_monthly_data = [data for data in monthly_data if not data["is_future"]]
+    monthly_checked_total = sum(data["checked_count"] for data in past_monthly_data)
+    monthly_possible_total = sum(data["total_count"] for data in past_monthly_data)
+    monthly_rate = monthly_checked_total / monthly_possible_total if monthly_possible_total > 0 else 0
 
-weekdays = ["월", "화", "수", "목", "금", "토", "일"]
-header_cols = st.columns(7)
+    st.write(f"{year}년 {month}월 전체 달성률")
+    st.progress(monthly_rate)
+    st.write(f"{monthly_checked_total}개 / {monthly_possible_total}개 완료")
+    st.write(f"월간 달성률 {monthly_rate * 100:.0f}%")
+    st.write("")
 
-for i, weekday in enumerate(weekdays):
-    header_cols[i].markdown(f"**{weekday}**")
+    weekdays = ["월", "화", "수", "목", "금", "토", "일"]
+    monthly_dict = {data["day"]: data for data in monthly_data}
+    month_calendar = calendar.monthcalendar(year, month)
+    calendar_cells = []
 
-monthly_dict = {data["day"]: data for data in monthly_data}
-month_calendar = calendar.monthcalendar(year, month)
+    for weekday in weekdays:
+        calendar_cells.append(f"<div class='calendar-header'>{weekday}</div>")
 
-for week in month_calendar:
-    cols = st.columns(7)
+    for week in month_calendar:
+        for day in week:
+            if day == 0:
+                calendar_cells.append("<div class='calendar-cell empty'></div>")
+                continue
 
-    for i, day in enumerate(week):
-        if day == 0:
-            cols[i].write("")
-            continue
+            data = monthly_dict[day]
+            day_rate = data["rate"]
+            cell_class = "calendar-cell"
 
-        data = monthly_dict[day]
-        day_rate = data["rate"]
+            if data["is_future"]:
+                icon = "▫️"
+                rate_text = "-"
+                cell_class += " future"
+            elif day_rate == 1:
+                icon = "✅"
+                rate_text = "100%"
+            elif day_rate >= 0.5:
+                icon = "🟡"
+                rate_text = f"{day_rate * 100:.0f}%"
+            elif day_rate > 0:
+                icon = "🟠"
+                rate_text = f"{day_rate * 100:.0f}%"
+            else:
+                icon = "⬜"
+                rate_text = "0%"
 
-        if data["is_future"]:
-            icon = "▫️"
-            rate_text = "-"
-        elif day_rate == 1:
-            icon = "✅"
-            rate_text = "100%"
-        elif day_rate >= 0.5:
-            icon = "🟡"
-            rate_text = f"{day_rate * 100:.0f}%"
-        elif day_rate > 0:
-            icon = "🟠"
-            rate_text = f"{day_rate * 100:.0f}%"
-        else:
-            icon = "⬜"
-            rate_text = "0%"
+            calendar_cells.append(
+                f"""
+                <div class='{cell_class}'>
+                    <div class='calendar-icon'>{icon}</div>
+                    <div class='calendar-day'>{day}일</div>
+                    <div class='calendar-rate'>{rate_text}</div>
+                </div>
+                """
+            )
 
-        cols[i].markdown(
-            f"""
-            <div style='text-align:center; border:1px solid #ddd; border-radius:8px; padding:6px; margin:2px;'>
-                <div>{icon}</div>
-                <div>{day}일</div>
-                <div>{rate_text}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        "<div class='routine-calendar'>" + "".join(calendar_cells) + "</div>",
+        unsafe_allow_html=True,
+    )
 
-st.divider()
-st.subheader("루틴 삭제")
 
-active_routines = get_active_routines()
+def render_manage_view():
+    st.subheader("루틴 삭제")
 
-if len(active_routines) > 0:
+    active_routines = get_active_routines()
+
+    if len(active_routines) == 0:
+        st.write("삭제할 루틴이 없습니다.")
+        return
+
     routine_options = {routine["name"]: routine["id"] for routine in active_routines}
     selected_name = st.selectbox("삭제할 루틴 선택", list(routine_options.keys()))
 
     if st.button("선택한 루틴 삭제"):
         delete_routine(routine_options[selected_name])
         st.rerun()
+
+
+st.set_page_config(page_title="루틴 체크", page_icon="✅", layout="centered")
+st.markdown(
+    """
+    <style>
+    .block-container {
+        max-width: 760px;
+        padding-top: 1.5rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    div.stButton > button {
+        width: 100%;
+        min-height: 2.75rem;
+    }
+
+    .routine-calendar {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 6px;
+        width: 100%;
+    }
+
+    .calendar-header,
+    .calendar-cell {
+        min-width: 0;
+        text-align: center;
+    }
+
+    .calendar-header {
+        font-size: 0.86rem;
+        font-weight: 700;
+        color: #4b5563;
+        padding: 0.25rem 0;
+    }
+
+    .calendar-cell {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 0.45rem 0.2rem;
+        min-height: 62px;
+        background: #ffffff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        line-height: 1.15;
+        overflow: hidden;
+    }
+
+    .calendar-cell.empty {
+        border-color: transparent;
+        background: transparent;
+    }
+
+    .calendar-cell.future {
+        background: #f9fafb;
+        color: #9ca3af;
+    }
+
+    .calendar-icon {
+        font-size: 1.15rem;
+        line-height: 1;
+        margin-bottom: 0.22rem;
+    }
+
+    .calendar-day {
+        font-size: 0.82rem;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    .calendar-rate {
+        font-size: 0.78rem;
+        color: #4b5563;
+        white-space: nowrap;
+    }
+
+    @media (max-width: 640px) {
+        .block-container {
+            padding-top: 1rem;
+            padding-left: 0.75rem;
+            padding-right: 0.75rem;
+        }
+
+        h1 {
+            font-size: 1.65rem !important;
+        }
+
+        h2, h3 {
+            font-size: 1.08rem !important;
+        }
+
+        .routine-calendar {
+            gap: 4px;
+        }
+
+        .calendar-header {
+            font-size: 0.72rem;
+        }
+
+        .calendar-cell {
+            border-radius: 6px;
+            min-height: 48px;
+            padding: 0.3rem 0.05rem;
+        }
+
+        .calendar-icon {
+            font-size: 0.95rem;
+            margin-bottom: 0.14rem;
+        }
+
+        .calendar-day {
+            font-size: 0.68rem;
+        }
+
+        .calendar-rate {
+            font-size: 0.64rem;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+init_db()
+
+st.title("나의 루틴 체크 ✅")
+
+with st.sidebar:
+    st.subheader("저장 방식")
+    if DATABASE_URL.startswith("sqlite"):
+        st.info("현재는 이 노트북의 SQLite 파일에 저장됩니다. 여러 기기 연동은 DATABASE_URL 설정 후 가능합니다.")
+    else:
+        st.success("클라우드 DB에 저장 중입니다. 같은 앱 주소로 접속하면 기기 간 동기화됩니다.")
+
+selected_date = st.date_input("날짜 선택", today_korea())
+log_date = selected_date
+st.caption(f"선택한 날짜: {log_date.isoformat()}")
+
+view = st.radio(
+    "화면",
+    ["오늘", "월간", "관리"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+st.divider()
+
+if view == "오늘":
+    render_today_view(log_date)
+elif view == "월간":
+    render_monthly_view(selected_date)
 else:
-    st.write("삭제할 루틴이 없습니다.")
-
-
-
-
-
+    render_manage_view()
